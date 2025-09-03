@@ -1,0 +1,293 @@
+import crypto from 'crypto';
+import axios from 'axios';
+import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import cron from 'node-cron';
+import Raffle from '../models/Raffle.js';
+import Admin from '../models/Admin.js';
+import bcrypt from 'bcrypt';
+import generateQR from '../utils/generateQR.js';
+import generatePDF from '../utils/generatePDF.js';
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+});
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image files are allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+// Admin login
+export const adminLogin = async (req, res) => {
+  console.log('POST /api/admin/login:', req.body);
+  try {
+    const { emailOrUsername, password } = req.body;
+    if (!emailOrUsername || !password) {
+      return res.status(400).json({ error: 'Email/username and password are required' });
+    }
+    const admin = await Admin.findOne({
+      $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
+    });
+    if (!admin || !(await bcrypt.compare(password, admin.password))) {
+      return res.status(401).json({ error: 'Invalid email/username or password' });
+    }
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is not defined');
+    }
+    const token = jwt.sign({ username: admin.username, role: 'admin' }, process.env.JWT_SECRET, {
+      expiresIn: '1h',
+    });
+    res.status(200).json({ token });
+  } catch (err) {
+    console.error('Admin login error:', err);
+    res.status(500).json({ error: 'Failed to login', details: err.message });
+  }
+};
+
+// Create raffle
+export const createRaffle = [
+  (req, res, next) => {
+    console.log('Before multer:', req.headers, req.body);
+    next();
+  },
+  upload.single('prizeImage'),
+  async (req, res) => {
+    console.log('After multer: headers=', req.headers, 'body=', req.body, 'file=', req.file);
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+      const token = authHeader.split(' ')[1];
+      if (!process.env.JWT_SECRET) {
+        throw new Error('JWT_SECRET is not defined');
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const { title, description, cashPrize, ticketPrice, endTime } = req.body;
+      if (!title || !cashPrize || !ticketPrice || !endTime) {
+        return res.status(400).json({ error: 'Missing required fields: title, cashPrize, ticketPrice, endTime' });
+      }
+      const parsedCashPrize = parseFloat(cashPrize);
+      const parsedTicketPrice = parseFloat(ticketPrice);
+      if (isNaN(parsedCashPrize) || parsedCashPrize <= 0) {
+        return res.status(400).json({ error: 'Cash prize must be a positive number' });
+      }
+      if (isNaN(parsedTicketPrice) || parsedTicketPrice < 0) {
+        return res.status(400).json({ error: 'Ticket price must be a non-negative number' });
+      }
+      const endDate = new Date(endTime);
+      if (isNaN(endDate.getTime()) || endDate <= new Date()) {
+        return res.status(400).json({ error: 'End time must be a valid date in the future' });
+      }
+      const raffle = new Raffle({
+        title,
+        description: description || '',
+        cashPrize: parsedCashPrize,
+        ticketPrice: parsedTicketPrice,
+        endTime: endDate,
+        prizeImage: req.file ? `/uploads/${req.file.filename}` : null,
+        createdBy: decoded.username,
+        creatorSecret: crypto.randomBytes(16).toString('hex'),
+        createdAt: new Date(),
+      });
+      await raffle.save();
+      res.status(201).json({
+        id: raffle._id,
+        creatorSecret: raffle.creatorSecret,
+      });
+    } catch (err) {
+      console.error('Create raffle error:', err);
+      res.status(400).json({ error: 'Failed to create raffle', details: err.message });
+    }
+  },
+];
+
+// Initialize payment
+export const initPayment = async (req, res) => {
+  const { raffleId, displayName, contact, email } = req.body;
+  console.log('POST /api/raffles/init-payment:', { raffleId, displayName, contact, email });
+  try {
+    if (!raffleId || !displayName || !contact) {
+      return res.status(400).json({ error: 'Missing required fields: raffleId, displayName, contact' });
+    }
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) {
+      return res.status(404).json({ error: 'Raffle not found' });
+    }
+    if (raffle.ticketPrice === 0) {
+      return handleTicketGeneration(req, res, raffle, displayName, contact);
+    }
+    res.status(200).json({
+      ticketPrice: raffle.ticketPrice,
+      currency: 'GHS',
+      raffleId,
+      displayName,
+      contact,
+      email,
+    });
+  } catch (err) {
+    console.error('Init payment error:', err);
+    res.status(500).json({ error: 'Failed to initialize payment', details: err.message });
+  }
+};
+
+// Verify payment
+export const verifyPayment = async (req, res) => {
+  const { reference, raffleId, name: displayName, contact } = req.body;
+  console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact });
+  try {
+    if (req.headers['x-paystack-signature']) {
+      const hash = crypto
+        .createHmac('sha512', process.env.PAYSTACK_SECRET)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
+      if (hash !== req.headers['x-paystack-signature']) {
+        return res.status(400).json({ error: 'Invalid Paystack signature' });
+      }
+      const event = req.body;
+      if (event.event === 'charge.success') {
+        const { raffleId, displayName, contact } = event.data.metadata;
+        const raffle = await Raffle.findById(raffleId);
+        if (!raffle) {
+          return res.status(404).json({ error: 'Raffle not found' });
+        }
+        await handleTicketGeneration({ body: { raffleId, displayName, contact } }, res, raffle, displayName, contact);
+      }
+      return res.status(200).send();
+    }
+    if (!reference || !raffleId || !displayName || !contact) {
+      return res.status(400).json({ error: 'Missing required fields: reference, raffleId, displayName, contact' });
+    }
+    const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET}` },
+    });
+    if (response.data.data.status !== 'success') {
+      return res.status(400).json({ error: 'Payment not successful' });
+    }
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) {
+      return res.status(404).json({ error: 'Raffle not found' });
+    }
+    await handleTicketGeneration(req, res, raffle, displayName, contact);
+  } catch (err) {
+    console.error('Verify payment error:', err);
+    res.status(500).json({ error: 'Failed to verify payment', details: err.message });
+  }
+};
+
+// Get ticket by number
+export const getTicketByNumber = async (req, res) => {
+  console.log(`GET /api/raffles/${req.params.raffleId}/ticket/${req.params.ticketNumber}`);
+  try {
+    const { raffleId, ticketNumber } = req.params;
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) {
+      return res.status(404).json({ error: 'Raffle not found' });
+    }
+    const participant = raffle.participants.find(p => p.ticketNumber === ticketNumber);
+    if (!participant) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    res.status(200).json({ raffle, participant });
+  } catch (error) {
+    console.error('Error fetching ticket:', error);
+    res.status(500).json({ error: 'Failed to fetch ticket', details: error.message });
+  }
+};
+
+// Handle ticket generation
+async function handleTicketGeneration(req, res, raffle, displayName, contact) {
+  try {
+    const ticketNumber = crypto.randomBytes(8).toString('hex').toUpperCase();
+    console.log('Generating QR code for ticket:', ticketNumber);
+    const qrCode = await generateQR(raffle._id, ticketNumber);
+    raffle.participants.push({ displayName, contact, ticketNumber });
+    await raffle.save();
+    generatePDF(raffle, { displayName, contact, ticketNumber }, qrCode, (doc) => {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename=raffle-ticket.pdf');
+      res.setHeader('X-Ticket-Number', ticketNumber);
+      doc.on('end', () => console.log('PDF stream ended'));
+      doc.pipe(res);
+    });
+  } catch (err) {
+    console.error('Ticket generation error:', err);
+    res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
+  }
+}
+
+// Get raffle
+export const getRaffle = async (req, res) => {
+  console.log(`GET /api/raffles/${req.params.id}`);
+  try {
+    const raffle = await Raffle.findById(req.params.id);
+    if (!raffle) {
+      return res.status(404).json({ error: 'Raffle not found' });
+    }
+    res.status(200).json(raffle);
+  } catch (err) {
+    console.error('Get raffle error:', err);
+    res.status(500).json({ error: 'Failed to fetch raffle', details: err.message });
+  }
+};
+
+// Get all raffles
+export const getAllRaffles = async (req, res) => {
+  try {
+    const raffles = await Raffle.find().sort({ createdAt: -1 });
+    res.status(200).json(raffles);
+  } catch (err) {
+    console.error('Error fetching raffles:', err);
+    res.status(500).json({ error: 'Failed to fetch raffles', details: err.message });
+  }
+};
+
+// End raffle
+export const endRaffle = async (req, res) => {
+  const { id, secret } = req.params;
+  console.log(`POST /api/raffles/end/${id}/${secret}`);
+  try {
+    const raffle = await Raffle.findById(id);
+    if (!raffle) {
+      return res.status(404).json({ error: 'Raffle not found' });
+    }
+    if (raffle.creatorSecret !== secret) {
+      return res.status(403).json({ error: 'Unauthorized: Invalid creator secret' });
+    }
+    if (raffle.participants.length > 0) {
+      const winnerIndex = Math.floor(Math.random() * raffle.participants.length);
+      raffle.winner = raffle.participants[winnerIndex].ticketNumber;
+    }
+    raffle.endTime = new Date();
+    await raffle.save();
+    res.status(200).json({ winner: raffle.winner || null });
+  } catch (err) {
+    console.error('End raffle error:', err);
+    res.status(500).json({ error: 'Failed to end raffle', details: err.message });
+  }
+};
+
+// Cron job to end raffles
+cron.schedule('* * * * *', async () => {
+  try {
+    const now = new Date();
+    const raffles = await Raffle.find({ endTime: { $lte: now }, winner: { $exists: false } });
+    for (const raffle of raffles) {
+      if (raffle.participants.length > 0) {
+        const winnerIndex = Math.floor(Math.random() * raffle.participants.length);
+        raffle.winner = raffle.participants[winnerIndex].ticketNumber;
+        await raffle.save();
+        console.log(`Raffle ${raffle._id} ended with winner: ${raffle.winner}`);
+      }
+    }
+  } catch (err) {
+    console.error('Cron job error:', err);
+  }
+});
