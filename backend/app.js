@@ -3,7 +3,7 @@ import cors from 'cors';
 import raffleRoutes from './routes/raffleRoutes.js';
 
 const app = express();
-app.use(cors({ origin: ['http://localhost:3000', 'https://raffle-frontend-xi.vercel.app/'] }));
+app.use(cors({ origin: ['https://raffle-frontend-xi.vercel.app/'] }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/api/raffles', raffleRoutes);
