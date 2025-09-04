@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import raffleRoutes from './routes/raffleRoutes.js';
+import * as raffleCtrl from './controllers/raffleController.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -50,6 +51,7 @@ app.use((req, res, next) => {
 
 // API Routes
 app.use('/api/raffles', raffleRoutes);
+app.post('/api/admin/login', raffleCtrl.adminLogin);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
