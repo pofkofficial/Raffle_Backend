@@ -41,7 +41,7 @@ const connectDatabase = async (retries = 5, delay = 5000) => {
     try {
       console.log(`🔗 Attempting MongoDB connection (${attempt}/${retries})...`);
       
-      await mongoose.connect('mongodb+srv://opokulive:dghTaemwTOgY6WzO@cluster0.o4mygrp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0');
+      await mongoose.connect(process.env.MONGO_URI);
       
 
       console.log('✅ MongoDB Connected successfully');
