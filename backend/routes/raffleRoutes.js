@@ -5,6 +5,7 @@ import multer from 'multer';
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+router.get('/', raffleCtrl.getAllRaffles);
 router.post('/create', upload.single('prizeImage'), raffleCtrl.createRaffle);
 router.post('/init-payment', raffleCtrl.initPayment);
 router.post('/verify-payment', raffleCtrl.verifyPayment);
