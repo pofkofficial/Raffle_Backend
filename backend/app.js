@@ -49,7 +49,7 @@ app.use((req, res, next) => {
 });
 
 // API Routes
-app.use('/api', raffleRoutes);
+app.use('/api/raffles', raffleRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
