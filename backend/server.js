@@ -32,8 +32,9 @@ process.on('unhandledRejection', (err) => {
 
 // Middleware
 app.use(cors({
-  //origin: ['http://localhost:3000', 'https://raffle-frontend-xi.vercel.app'],
-  origin: process.env.NODE_ENV === 'production' ? 'https://raffle-frontend-xi.vercel.app' : 'http://localhost:3000',
+  origin: ['http://localhost:3000', 'https://raffle-frontend-xi.vercel.app'],
+  credentials: true,
+  //origin: process.env.NODE_ENV === 'production' ? 'https://raffle-frontend-xi.vercel.app' : 'http://localhost:3000',
   exposedHeaders: ['X-Ticket-Number'],
 }));
 app.use(express.json());
