@@ -1,28 +1,11 @@
 import crypto from 'crypto';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
-import multer from 'multer';
-import cron from 'node-cron';
 import Raffle from '../models/Raffle.js';
 import Admin from '../models/Admin.js';
 import bcrypt from 'bcrypt';
 import generateQR from '../utils/generateQR.js';
 import generatePDF from '../utils/generatePDF.js';
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
-});
-const upload = multer({
-  storage,
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image files are allowed'));
-    }
-    cb(null, true);
-  },
-});
 
 // Admin login
 export const adminLogin = async (req, res) => {
@@ -54,10 +37,9 @@ export const adminLogin = async (req, res) => {
 // Create raffle
 export const createRaffle = [
   (req, res, next) => {
-    console.log('Before multer:', req.headers, req.body);
+    console.log('Before createRaffle:', req.headers, req.body);
     next();
   },
-  upload.single('prizeImage'),
   async (req, res) => {
     console.log('After multer: headers=', req.headers, 'body=', req.body, 'file=', req.file);
     try {
@@ -92,7 +74,7 @@ export const createRaffle = [
         cashPrize: parsedCashPrize,
         ticketPrice: parsedTicketPrice,
         endTime: endDate,
-        prizeImage: req.file ? `/uploads/${req.file.filename}` : null,
+        prizeImage: req.file ? req.file.buffer.toString('base64') : null,
         createdBy: decoded.username,
         creatorSecret: crypto.randomBytes(16).toString('hex'),
         createdAt: new Date(),
@@ -210,13 +192,13 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact) {
     const qrCode = await generateQR(raffle._id, ticketNumber);
     raffle.participants.push({ displayName, contact, ticketNumber });
     await raffle.save();
-    generatePDF(raffle, { displayName, contact, ticketNumber }, qrCode, (doc) => {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename=raffle-ticket.pdf');
-      res.setHeader('X-Ticket-Number', ticketNumber);
-      doc.on('end', () => console.log('PDF stream ended'));
-      doc.pipe(res);
+    const pdfBuffer = await generatePDF({ ticketNumber, raffleId: raffle._id, displayName, contact, qrCode });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename=ticket-${ticketNumber}.pdf`,
+      'X-Ticket-Number': ticketNumber,
     });
+    res.send(pdfBuffer);
   } catch (err) {
     console.error('Ticket generation error:', err);
     res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
@@ -273,21 +255,3 @@ export const endRaffle = async (req, res) => {
     res.status(500).json({ error: 'Failed to end raffle', details: err.message });
   }
 };
-
-// Cron job to end raffles
-cron.schedule('* * * * *', async () => {
-  try {
-    const now = new Date();
-    const raffles = await Raffle.find({ endTime: { $lte: now }, winner: { $exists: false } });
-    for (const raffle of raffles) {
-      if (raffle.participants.length > 0) {
-        const winnerIndex = Math.floor(Math.random() * raffle.participants.length);
-        raffle.winner = raffle.participants[winnerIndex].ticketNumber;
-        await raffle.save();
-        console.log(`Raffle ${raffle._id} ended with winner: ${raffle.winner}`);
-      }
-    }
-  } catch (err) {
-    console.error('Cron job error:', err);
-  }
-});
