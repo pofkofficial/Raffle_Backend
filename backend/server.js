@@ -46,7 +46,7 @@ const connectDatabase = async (retries = 5, delay = 5000) => {
         useUnifiedTopology: true,
         serverSelectionTimeoutMS: 1000000,
         socketTimeoutMS: 45000,
-        connectTimeoutMS: 10000
+        connectTimeoutMS: 1000000
       });
 
       console.log('✅ MongoDB Connected successfully');
