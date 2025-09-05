@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import raffleRoutes from './routes/raffleRoutes.js';
-import * as raffleCtrl from './controllers/raffleController.js';
+import mongoose from 'mongoose';
+import raffleRoutes from '../routes/raffleRoutes.js';
+import * as raffleCtrl from '../controllers/raffleController.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,8 +15,7 @@ const app = express();
 // CORS Configuration
 const allowedOrigins = [
   'http://localhost:3000',
-  'https://raffle-frontend-xi.vercel.app',
-  'https://raffle-frontend-.vercel.app'
+  'https://raffle-frontend-xi.vercel.app'
 ];
 
 app.use(cors({
@@ -55,11 +55,25 @@ app.post('/api/admin/login', raffleCtrl.adminLogin);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  const dbStatus = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting',
+    99: 'uninitialized'
+  }[mongoose.connection.readyState] || 'unknown';
+  
   res.status(200).json({ 
-    status: 'OK', 
+    status: dbStatus === 'connected' ? 'OK' : 'DEGRADED',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    service: 'RaffleHub Backend'
+    service: 'RaffleHub Backend',
+    database: {
+      status: dbStatus,
+      host: mongoose.connection.host || 'N/A',
+      port: mongoose.connection.port || 'N/A',
+      name: mongoose.connection.name || 'N/A'
+    }
   });
 });
 
