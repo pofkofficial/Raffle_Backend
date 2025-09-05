@@ -1,15 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
-import raffleRoutes from '../routes/raffleRoutes.js';
-import * as raffleCtrl from '../controllers/raffleController.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import raffleRoutes from './routes/raffleRoutes.js';
+import * as raffleCtrl from './controllers/raffleController.js';
 
-// ES modules path handling
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// Initialize Express app
 const app = express();
 
 // CORS Configuration
@@ -23,7 +18,7 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps, Postman, curl, etc.)
     if (!origin) return callback(null, true);
     
-    // Check if origin is allowed or matches pattern
+    // Check if origin is allowed
     const isAllowed = allowedOrigins.some(allowed => 
       origin === allowed || origin.startsWith(allowed.replace('*', ''))
     );
@@ -91,16 +86,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// Serve static files from React build
-app.use(express.static(path.join(__dirname, '../frontend/build'), {
-  maxAge: '1d',
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    }
-  }
-}));
-
 // 404 handler for API routes
 app.use('/api/*', (req, res) => {
   res.status(404).json({ 
@@ -109,11 +94,6 @@ app.use('/api/*', (req, res) => {
     method: req.method,
     availableEndpoints: ['/api/health', '/api/raffles', '/api/admin']
   });
-});
-
-// SPA fallback - serve React app for all other routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
 });
 
 // Global error handler
