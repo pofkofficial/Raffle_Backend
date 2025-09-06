@@ -126,40 +126,53 @@ export const verifyPayment = async (req, res) => {
   console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact });
   try {
     if (req.headers['x-paystack-signature']) {
+      console.log('Processing Paystack webhook');
       const hash = crypto
         .createHmac('sha512', process.env.PAYSTACK_SECRET)
         .update(JSON.stringify(req.body))
         .digest('hex');
       if (hash !== req.headers['x-paystack-signature']) {
+        console.error('Invalid Paystack signature:', hash, req.headers['x-paystack-signature']);
         return res.status(400).json({ error: 'Invalid Paystack signature' });
       }
       const event = req.body;
       if (event.event === 'charge.success') {
         const { raffleId, displayName, contact } = event.data.metadata;
+        console.log('Webhook charge.success:', { raffleId, displayName, contact });
         const raffle = await Raffle.findById(raffleId);
         if (!raffle) {
+          console.error('Raffle not found for webhook:', raffleId);
           return res.status(404).json({ error: 'Raffle not found' });
         }
         await handleTicketGeneration({ body: { raffleId, displayName, contact } }, res, raffle, displayName, contact);
       }
       return res.status(200).send();
     }
+    console.log('Processing client-side payment verification');
     if (!reference || !raffleId || !displayName || !contact) {
+      console.error('Missing required fields:', { reference, raffleId, displayName, contact });
       return res.status(400).json({ error: 'Missing required fields: reference, raffleId, displayName, contact' });
+    }
+    if (!process.env.PAYSTACK_SECRET) {
+      console.error('PAYSTACK_SECRET is not defined');
+      throw new Error('PAYSTACK_SECRET is not defined');
     }
     const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
       headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET}` },
     });
-    if (response.data.data.status !== 'success') {
-      return res.status(400).json({ error: 'Payment not successful' });
+    console.log('Paystack API response:', response.data);
+    if (response.data.status !== true || response.data.data.status !== 'success') {
+      console.error('Payment not successful:', response.data);
+      return res.status(400).json({ error: 'Payment not successful', details: response.data.message });
     }
     const raffle = await Raffle.findById(raffleId);
     if (!raffle) {
+      console.error('Raffle not found:', raffleId);
       return res.status(404).json({ error: 'Raffle not found' });
     }
     await handleTicketGeneration(req, res, raffle, displayName, contact);
   } catch (err) {
-    console.error('Verify payment error:', err);
+    console.error('Verify payment error:', err.message, err.stack);
     res.status(500).json({ error: 'Failed to verify payment', details: err.message });
   }
 };
@@ -187,20 +200,31 @@ export const getTicketByNumber = async (req, res) => {
 // Handle ticket generation
 async function handleTicketGeneration(req, res, raffle, displayName, contact) {
   try {
+    console.log('Starting ticket generation for raffle:', raffle._id, 'displayName:', displayName);
     const ticketNumber = crypto.randomBytes(8).toString('hex').toUpperCase();
-    console.log('Generating QR code for ticket:', ticketNumber);
-    const qrCode = await generateQR(raffle._id, ticketNumber);
+    console.log('Generated ticket number:', ticketNumber);
+    
+    const qrCode = await generateQR(raffle._id.toString(), ticketNumber);
+    console.log('QR code generated successfully');
+    
     raffle.participants.push({ displayName, contact, ticketNumber });
     await raffle.save();
+    console.log('Participant added to raffle and saved');
+    
     const pdfBuffer = await generatePDF({ ticketNumber, raffleId: raffle._id, displayName, contact, qrCode });
+    console.log('PDF generated successfully');
+    
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename=ticket-${ticketNumber}.pdf`,
       'X-Ticket-Number': ticketNumber,
     });
+    console.log('Response headers set for PDF download');
+    
     res.send(pdfBuffer);
+    console.log('PDF sent in response');
   } catch (err) {
-    console.error('Ticket generation error:', err);
+    console.error('Ticket generation error:', err.message, err.stack);
     res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
   }
 }
