@@ -7,11 +7,11 @@ import { parse } from 'url';
 
 // Initialize Express app
 const app = express();
+const FRONTEND = process.env.FRONTEND_LINK;
 
 // CORS Configuration
 const allowedOrigins = [
-  'http://localhost:3000',
-  'https://raffle-frontend-xi.vercel.app'
+  'http://localhost:3000', FRONTEND
 ];
 
 app.use(cors({
