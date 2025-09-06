@@ -3,12 +3,16 @@ import QRCode from 'qrcode';
 const generateQR = async (raffleId, ticketNumber) => {
   try {
     const FRONTEND = process.env.FRONTEND_LINK;
-    const ticketUrl = FRONTEND + `/ticket/${raffleId}?ticketNumber=${encodeURIComponent(ticketNumber)}`;
-    const qrCode = await QRCode.toBuffer(ticketUrl);
-    console.log('Generated QR code Buffer:', qrCode.length, 'bytes');
+    const url = FRONTEND + `/ticket/${raffleId}?ticketNumber=${ticketNumber}`;
+    const qrCode = await QRCode.toDataURL(url, {
+      errorCorrectionLevel: 'H',
+      type: 'image/png',
+      margin: 1,
+    });
+    console.log('Generated QR code data URL:', qrCode.substring(0, 50) + '...');
     return qrCode;
-  } catch (err) {
-    console.error('Error generating QR code:', err);
+  } catch (error) {
+    console.error('QR code generation error:', error);
     throw new Error('Failed to generate QR code');
   }
 };
