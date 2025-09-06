@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
-import raffleRoutes from './routes/raffleRoutes.js';
-import * as raffleCtrl from './controllers/raffleController.js';
+import raffleRoutes from '../routes/raffleRoutes.js';
+import * as raffleCtrl from '../controllers/raffleController.js';
 
 // Initialize Express app
 const app = express();
