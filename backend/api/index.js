@@ -57,6 +57,22 @@ app.get('/api/health', (req, res) => {
     3: 'disconnecting',
     99: 'uninitialized'
   }[mongoose.connection.readyState] || 'unknown';
+
+  // Parse MONGO_URI safely
+  let mongoUriDetails = { uri: 'N/A', host: 'N/A', database: 'N/A', protocol: 'N/A' };
+  if (process.env.MONGO_URI) {
+    try {
+      const parsedUri = parse(process.env.MONGO_URI);
+      mongoUriDetails = {
+        uri: parsedUri.href ? parsedUri.href.replace(/\/\/[^@]+@/, '//<redacted>@') : 'N/A',
+        host: parsedUri.hostname || 'N/A',
+        database: parsedUri.pathname ? parsedUri.pathname.replace(/^\//, '') : 'N/A',
+        protocol: parsedUri.protocol ? parsedUri.protocol.replace(/:$/, '') : 'N/A'
+      };
+    } catch (error) {
+      console.warn('⚠️ Failed to parse MONGO_URI:', error.message);
+    }
+  }
   
   res.status(200).json({ 
     status: dbStatus === 'connected' ? 'OK' : 'DEGRADED',
@@ -67,11 +83,11 @@ app.get('/api/health', (req, res) => {
       status: dbStatus,
       host: mongoose.connection.host || 'N/A',
       port: mongoose.connection.port || 'N/A',
-      name: mongoose.connection.name || 'N/A'
+      name: mongoose.connection.name || 'N/A',
+      environment: mongoUriDetails
     }
   });
 });
-
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({ 
