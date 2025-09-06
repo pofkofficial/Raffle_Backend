@@ -122,8 +122,8 @@ export const initPayment = async (req, res) => {
 
 // Verify payment
 export const verifyPayment = async (req, res) => {
-  const { reference, raffleId, name: displayName, contact } = req.body;
-  console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact });
+  const { reference, raffleId, name: displayName, contact, email } = req.body;
+  console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact, email });
   try {
     if (req.headers['x-paystack-signature']) {
       console.log('Processing Paystack webhook');
@@ -145,35 +145,48 @@ export const verifyPayment = async (req, res) => {
           return res.status(404).json({ error: 'Raffle not found' });
         }
         await handleTicketGeneration({ body: { raffleId, displayName, contact } }, res, raffle, displayName, contact);
+        return res.status(200).send();
       }
       return res.status(200).send();
     }
     console.log('Processing client-side payment verification');
     if (!reference || !raffleId || !displayName || !contact) {
-      console.error('Missing required fields:', { reference, raffleId, displayName, contact });
+      console.error('Missing required fields:', { reference, raffleId, displayName, contact, email });
       return res.status(400).json({ error: 'Missing required fields: reference, raffleId, displayName, contact' });
     }
     if (!process.env.PAYSTACK_SECRET) {
       console.error('PAYSTACK_SECRET is not defined');
       throw new Error('PAYSTACK_SECRET is not defined');
     }
+    console.log('Verifying payment with Paystack API:', reference);
     const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
       headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET}` },
+    }).catch(err => {
+      console.error('Paystack API error:', err.response?.data || err.message);
+      throw new Error(`Paystack API error: ${err.response?.data?.message || err.message}`);
     });
-    console.log('Paystack API response:', response.data);
+    console.log('Paystack API response:', JSON.stringify(response.data, null, 2));
     if (response.data.status !== true || response.data.data.status !== 'success') {
-      console.error('Payment not successful:', response.data);
-      return res.status(400).json({ error: 'Payment not successful', details: response.data.message });
+      console.error('Payment verification failed:', response.data);
+      return res.status(400).json({ error: 'Payment not successful', details: response.data.message || 'Unknown error' });
     }
-    const raffle = await Raffle.findById(raffleId);
+    const raffle = await Raffle.findById(raffleId).catch(err => {
+      console.error('MongoDB findById error:', err);
+      throw new Error(`MongoDB error: ${err.message}`);
+    });
     if (!raffle) {
       console.error('Raffle not found:', raffleId);
       return res.status(404).json({ error: 'Raffle not found' });
     }
+    console.log('Raffle found:', raffle._id);
     await handleTicketGeneration(req, res, raffle, displayName, contact);
   } catch (err) {
     console.error('Verify payment error:', err.message, err.stack);
-    res.status(500).json({ error: 'Failed to verify payment', details: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to verify payment', details: err.message });
+    } else {
+      console.warn('Headers already sent, cannot send error response');
+    }
   }
 };
 
@@ -204,15 +217,29 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact) {
     const ticketNumber = crypto.randomBytes(8).toString('hex').toUpperCase();
     console.log('Generated ticket number:', ticketNumber);
     
-    const qrCode = await generateQR(raffle._id.toString(), ticketNumber);
+    const qrCode = await generateQR(raffle._id.toString(), ticketNumber).catch(err => {
+      console.error('QR code generation failed:', err);
+      throw new Error(`QR code generation failed: ${err.message}`);
+    });
     console.log('QR code generated successfully');
     
     raffle.participants.push({ displayName, contact, ticketNumber });
-    await raffle.save();
+    await raffle.save().catch(err => {
+      console.error('MongoDB save error:', err);
+      throw new Error(`MongoDB save error: ${err.message}`);
+    });
     console.log('Participant added to raffle and saved');
     
-    const pdfBuffer = await generatePDF({ ticketNumber, raffleId: raffle._id, displayName, contact, qrCode });
+    const pdfBuffer = await generatePDF({ ticketNumber, raffleId: raffle._id, displayName, contact, qrCode }).catch(err => {
+      console.error('PDF generation failed:', err);
+      throw new Error(`PDF generation failed: ${err.message}`);
+    });
     console.log('PDF generated successfully');
+    
+    if (res.headersSent) {
+      console.warn('Headers already sent, cannot send PDF response');
+      return;
+    }
     
     res.set({
       'Content-Type': 'application/pdf',
@@ -225,7 +252,11 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact) {
     console.log('PDF sent in response');
   } catch (err) {
     console.error('Ticket generation error:', err.message, err.stack);
-    res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
+    } else {
+      console.warn('Headers already sent, cannot send error response');
+    }
   }
 }
 
