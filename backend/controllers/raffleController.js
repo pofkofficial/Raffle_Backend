@@ -52,33 +52,55 @@ export const createRaffle = [
         throw new Error('JWT_SECRET is not defined');
       }
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const { title, description, cashPrize, ticketPrice, endTime } = req.body;
-      if (!title || !cashPrize || !ticketPrice || !endTime) {
-        return res.status(400).json({ error: 'Missing required fields: title, cashPrize, ticketPrice, endTime' });
+      const { title, description, prizeTypes, cashPrize, itemName, ticketPrice, endTime } = req.body;
+
+      // Parse prizeTypes
+      let parsedPrizeTypes;
+      try {
+        parsedPrizeTypes = JSON.parse(prizeTypes);
+        if (!Array.isArray(parsedPrizeTypes) || parsedPrizeTypes.length === 0) {
+          throw new Error('Invalid prize types');
+        }
+        if (!parsedPrizeTypes.every(type => ['cash', 'item'].includes(type))) {
+          throw new Error('Prize types must be "cash" or "item"');
+        }
+      } catch (err) {
+        return res.status(400).json({ error: 'Invalid prize types format', details: err.message });
       }
-      const parsedCashPrize = parseFloat(cashPrize);
-      const parsedTicketPrice = parseFloat(ticketPrice);
-      if (isNaN(parsedCashPrize) || parsedCashPrize <= 0) {
+
+      // Validate required fields
+      if (!title) {
+        return res.status(400).json({ error: 'Missing required field: title' });
+      }
+      if (parsedPrizeTypes.includes('cash') && (!cashPrize || isNaN(cashPrize) || parseFloat(cashPrize) <= 0)) {
         return res.status(400).json({ error: 'Cash prize must be a positive number' });
       }
-      if (isNaN(parsedTicketPrice) || parsedTicketPrice < 0) {
+      if (parsedPrizeTypes.includes('item') && !itemName) {
+        return res.status(400).json({ error: 'Item name is required when item is selected' });
+      }
+      if (!ticketPrice || isNaN(ticketPrice) || parseFloat(ticketPrice) < 0) {
         return res.status(400).json({ error: 'Ticket price must be a non-negative number' });
       }
       const endDate = new Date(endTime);
       if (isNaN(endDate.getTime()) || endDate <= new Date()) {
         return res.status(400).json({ error: 'End time must be a valid date in the future' });
       }
+
+      // Create raffle
       const raffle = new Raffle({
         title,
         description: description || '',
-        cashPrize: parsedCashPrize,
-        ticketPrice: parsedTicketPrice,
-        endTime: endDate,
+        prizeTypes: parsedPrizeTypes,
+        cashPrize: parsedPrizeTypes.includes('cash') ? parseFloat(cashPrize) : null,
+        itemName: parsedPrizeTypes.includes('item') ? itemName : null,
         prizeImage: req.file ? req.file.buffer.toString('base64') : null,
+        ticketPrice: parseFloat(ticketPrice),
+        endTime: endDate,
         createdBy: decoded.username,
         creatorSecret: crypto.randomBytes(16).toString('hex'),
         createdAt: new Date(),
       });
+
       await raffle.save();
       res.status(201).json({
         id: raffle._id,
