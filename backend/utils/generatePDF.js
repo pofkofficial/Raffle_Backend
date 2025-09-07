@@ -1,9 +1,8 @@
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
 import JSZip from 'jszip';
 
-async function generatePDF({ ticketNumbers, raffleId, displayName, contact, qrCodes }) {
-  console.log('Generating PDFs for ticket numbers:', ticketNumbers);
+async function generatePDF({ ticketNumbers, raffleId, displayName, contact, email, qrCodes }) {
+  console.log('Generating PDFs for ticket numbers:', ticketNumbers, 'email:', email);
   const zip = new JSZip();
 
   for (let i = 0; i < ticketNumbers.length; i++) {
@@ -21,6 +20,7 @@ async function generatePDF({ ticketNumbers, raffleId, displayName, contact, qrCo
     doc.text(`Ticket Number: ${ticketNumber}`);
     doc.text(`Name: ${displayName}`);
     doc.text(`Contact: ${contact}`);
+    doc.text(`Email: ${email}`);
     doc.moveDown();
     doc.image(qrCode, { fit: [100, 100], align: 'center', valign: 'center' });
 

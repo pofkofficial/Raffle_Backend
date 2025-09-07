@@ -160,14 +160,18 @@ export const verifyPayment = async (req, res) => {
       }
       const event = req.body;
       if (event.event === 'charge.success') {
-        const { raffleId, displayName, contact, email, quantity } = event.data.metadata;
+        const { raffleId, displayName, contact, email, quantity } = event.data.metadata || {};
         console.log('Webhook charge.success:', { raffleId, displayName, contact, email, quantity });
+        if (!raffleId || !displayName || !contact || !email || !quantity || isNaN(quantity) || quantity < 1) {
+          console.error('Missing or invalid metadata in webhook:', { raffleId, displayName, contact, email, quantity });
+          return res.status(400).json({ error: 'Invalid webhook metadata' });
+        }
         const raffle = await Raffle.findById(raffleId);
         if (!raffle) {
           console.error('Raffle not found for webhook:', raffleId);
           return res.status(404).json({ error: 'Raffle not found' });
         }
-        await handleTicketGeneration({ body: { raffleId, displayName, contact, email, quantity } }, res, raffle, displayName, contact, email, parseInt(quantity));
+        await handleTicketGeneration(req, res, raffle, displayName, contact, email, parseInt(quantity));
         return res.status(200).send();
       }
       return res.status(200).send();
@@ -236,8 +240,13 @@ export const getTicketByNumber = async (req, res) => {
 // Handle ticket generation
 async function handleTicketGeneration(req, res, raffle, displayName, contact, email, quantity) {
   try {
-    console.log('Starting ticket generation for raffle:', raffle._id, 'displayName:', displayName, 'quantity:', quantity);
+    console.log('Starting ticket generation for raffle:', raffle._id, 'displayName:', displayName, 'contact:', contact, 'email:', email, 'quantity:', quantity);
     
+    if (!email) {
+      console.error('Email is required but missing');
+      throw new Error('Email is required');
+    }
+
     const ticketNumbers = [];
     const qrCodes = [];
     for (let i = 0; i < quantity; i++) {
@@ -276,7 +285,7 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact, em
     });
     console.log('Participant updated/saved with ticket numbers:', ticketNumbers);
 
-    const pdfBuffer = await generatePDF({ ticketNumbers, raffleId: raffle._id, displayName, contact, qrCodes }).catch(err => {
+    const pdfBuffer = await generatePDF({ ticketNumbers, raffleId: raffle._id, displayName, contact, email, qrCodes }).catch(err => {
       console.error('PDF generation failed:', err);
       throw new Error(`PDF generation failed: ${err.message}`);
     });
@@ -345,7 +354,6 @@ export const endRaffle = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized: Invalid creator secret' });
     }
     if (raffle.participants.length > 0) {
-      // Collect all ticket numbers from participants
       const allTicketNumbers = raffle.participants.reduce((acc, p) => [...acc, ...p.ticketNumbers], []);
       const winnerIndex = Math.floor(Math.random() * allTicketNumbers.length);
       raffle.winner = allTicketNumbers[winnerIndex];
