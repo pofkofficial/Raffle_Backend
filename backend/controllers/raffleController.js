@@ -97,15 +97,11 @@ export const createRaffle = [
         ticketPrice: parseFloat(ticketPrice),
         endTime: endDate,
         createdBy: decoded.username,
-        creatorSecret: crypto.randomBytes(16).toString('hex'),
         createdAt: new Date(),
       });
 
       await raffle.save();
-      res.status(201).json({
-        id: raffle._id,
-        creatorSecret: raffle.creatorSecret,
-      });
+      res.status(201).json({ id: raffle._id });
     } catch (err) {
       console.error('Create raffle error:', err);
       res.status(400).json({ error: 'Failed to create raffle', details: err.message });
@@ -206,6 +202,10 @@ export const verifyPayment = async (req, res) => {
       return res.status(404).json({ error: 'Raffle not found' });
     }
     console.log('Raffle found:', raffle._id);
+    // Set CORS headers for client-side verification
+    res.set({
+      'Access-Control-Expose-Headers': 'X-Ticket-Numbers',
+    });
     await handleTicketGeneration(req, res, raffle, displayName, contact, email, parseInt(quantity));
   } catch (err) {
     console.error('Verify payment error:', err.message, err.stack);
@@ -261,14 +261,15 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact, em
     console.log('Generated ticket numbers:', ticketNumbers);
 
     // Check if participant already exists by email and contact
-    const existingParticipant = raffle.participants.find(
+    const existingParticipantIndex = raffle.participants.findIndex(
       p => p.email === email && p.contact === contact
     );
     
-    if (existingParticipant) {
-      // Add new ticket numbers to existing participant
-      existingParticipant.ticketNumbers.push(...ticketNumbers);
-      existingParticipant.displayName = displayName; // Update displayName if changed
+    if (existingParticipantIndex !== -1) {
+      // Update existing participant
+      raffle.participants[existingParticipantIndex].ticketNumbers.push(...ticketNumbers);
+      raffle.participants[existingParticipantIndex].displayName = displayName;
+      raffle.participants[existingParticipantIndex].email = email; // Ensure email is explicitly set
     } else {
       // Add new participant
       raffle.participants.push({
@@ -278,6 +279,9 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact, em
         ticketNumbers,
       });
     }
+
+    // Log the participants array before saving
+    console.log('Participants before save:', JSON.stringify(raffle.participants, null, 2));
 
     await raffle.save().catch(err => {
       console.error('MongoDB save error:', err);
@@ -289,7 +293,7 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact, em
       console.error('PDF generation failed:', err);
       throw new Error(`PDF generation failed: ${err.message}`);
     });
-    console.log('ZIP file generated for tickets');
+    console.log('ZIP file generated for tickets:', ticketNumbers);
 
     if (res.headersSent) {
       console.warn('Headers already sent, cannot send ZIP response');
@@ -299,9 +303,13 @@ async function handleTicketGeneration(req, res, raffle, displayName, contact, em
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename=tickets-${raffle._id}.zip`,
-      'X-Ticket-Numbers': JSON.stringify(ticketNumbers),
+      'x-ticket-numbers': JSON.stringify(ticketNumbers), // Use lowercase header
     });
-    console.log('Response headers set for ZIP download');
+    console.log('Response headers set for ZIP download:', {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename=tickets-${raffle._id}.zip`,
+      'x-ticket-numbers': JSON.stringify(ticketNumbers),
+    });
 
     res.send(pdfBuffer);
     console.log('ZIP file sent in response');
@@ -343,15 +351,22 @@ export const getAllRaffles = async (req, res) => {
 
 // End raffle
 export const endRaffle = async (req, res) => {
-  const { id, secret } = req.params;
-  console.log(`POST /api/raffles/end/${id}/${secret}`);
+  const { id } = req.params;
+  console.log(`POST /api/raffles/end/${id}`);
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const token = authHeader.split(' ')[1];
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is not defined');
+    }
+    jwt.verify(token, process.env.JWT_SECRET);
+    
     const raffle = await Raffle.findById(id);
     if (!raffle) {
       return res.status(404).json({ error: 'Raffle not found' });
-    }
-    if (raffle.creatorSecret !== secret) {
-      return res.status(403).json({ error: 'Unauthorized: Invalid creator secret' });
     }
     if (raffle.participants.length > 0) {
       const allTicketNumbers = raffle.participants.reduce((acc, p) => [...acc, ...p.ticketNumbers], []);

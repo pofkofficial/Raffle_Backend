@@ -1,12 +1,13 @@
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import cors from 'cors';
 import app from './api/index.js';
 
 // Load environment variables first
 dotenv.config();
 
 // Validate required environment variables
-const requiredEnvVars = ['MONGO_URI'];
+const requiredEnvVars = ['MONGO_URI', 'JWT_SECRET', 'PAYSTACK_SECRET'];
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
 if (missingEnvVars.length > 0) {
@@ -21,6 +22,14 @@ console.log('   NODE_ENV:', process.env.NODE_ENV || 'development');
 console.log('   MONGO_URI:', process.env.MONGO_URI ? '✅ Set' : '❌ Missing');
 console.log('   JWT_SECRET:', process.env.JWT_SECRET ? '✅ Set' : '❌ Missing');
 console.log('   PAYSTACK_SECRET:', process.env.PAYSTACK_SECRET ? '✅ Set' : '❌ Missing');
+
+// Apply CORS middleware
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://raffle-frontend-xi.vercel.app'],
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['x-ticket-numbers'],
+}));
 
 // Global error handlers for uncaught exceptions
 process.on('uncaughtException', (error) => {
@@ -43,7 +52,6 @@ const connectDatabase = async (retries = 5, delay = 5000) => {
       
       await mongoose.connect(process.env.MONGO_URI);
       
-
       console.log('✅ MongoDB Connected successfully');
       
       // MongoDB event listeners
