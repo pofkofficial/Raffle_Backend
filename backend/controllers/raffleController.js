@@ -54,12 +54,11 @@ export const createRaffle = [
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const { title, description, prizeTypes, cashPrize, itemName, ticketPrice, endTime } = req.body;
 
-      // Parse prizeTypes
       let parsedPrizeTypes;
       try {
         parsedPrizeTypes = JSON.parse(prizeTypes);
         if (!Array.isArray(parsedPrizeTypes) || parsedPrizeTypes.length === 0) {
-          throw new Error('Invalid prize types');
+          throw new Error('Prize types must be a non-empty array');
         }
         if (!parsedPrizeTypes.every(type => ['cash', 'item'].includes(type))) {
           throw new Error('Prize types must be "cash" or "item"');
@@ -68,7 +67,6 @@ export const createRaffle = [
         return res.status(400).json({ error: 'Invalid prize types format', details: err.message });
       }
 
-      // Validate required fields
       if (!title) {
         return res.status(400).json({ error: 'Missing required field: title' });
       }
@@ -78,6 +76,9 @@ export const createRaffle = [
       if (parsedPrizeTypes.includes('item') && !itemName) {
         return res.status(400).json({ error: 'Item name is required when item is selected' });
       }
+      if (parsedPrizeTypes.includes('item') && !req.file) {
+        return res.status(400).json({ error: 'Prize image is required when item is selected' });
+      }
       if (!ticketPrice || isNaN(ticketPrice) || parseFloat(ticketPrice) < 0) {
         return res.status(400).json({ error: 'Ticket price must be a non-negative number' });
       }
@@ -86,7 +87,6 @@ export const createRaffle = [
         return res.status(400).json({ error: 'End time must be a valid date in the future' });
       }
 
-      // Create raffle
       const raffle = new Raffle({
         title,
         description: description || '',
@@ -115,26 +115,27 @@ export const createRaffle = [
 
 // Initialize payment
 export const initPayment = async (req, res) => {
-  const { raffleId, displayName, contact, email } = req.body;
-  console.log('POST /api/raffles/init-payment:', { raffleId, displayName, contact, email });
+  const { raffleId, displayName, contact, email, quantity } = req.body;
+  console.log('POST /api/raffles/init-payment:', { raffleId, displayName, contact, email, quantity });
   try {
-    if (!raffleId || !displayName || !contact) {
-      return res.status(400).json({ error: 'Missing required fields: raffleId, displayName, contact' });
+    if (!raffleId || !displayName || !contact || !email || !quantity || isNaN(quantity) || quantity < 1) {
+      return res.status(400).json({ error: 'Missing or invalid required fields: raffleId, displayName, contact, email, quantity' });
     }
     const raffle = await Raffle.findById(raffleId);
     if (!raffle) {
       return res.status(404).json({ error: 'Raffle not found' });
     }
     if (raffle.ticketPrice === 0) {
-      return handleTicketGeneration(req, res, raffle, displayName, contact);
+      return handleTicketGeneration(req, res, raffle, displayName, contact, email, parseInt(quantity));
     }
     res.status(200).json({
-      ticketPrice: raffle.ticketPrice,
+      ticketPrice: raffle.ticketPrice * parseInt(quantity),
       currency: 'GHS',
       raffleId,
       displayName,
       contact,
       email,
+      quantity: parseInt(quantity),
     });
   } catch (err) {
     console.error('Init payment error:', err);
@@ -144,8 +145,8 @@ export const initPayment = async (req, res) => {
 
 // Verify payment
 export const verifyPayment = async (req, res) => {
-  const { reference, raffleId, name: displayName, contact, email } = req.body;
-  console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact, email });
+  const { reference, raffleId, name: displayName, contact, email, quantity } = req.body;
+  console.log('POST /api/raffles/verify-payment or /webhook:', { reference, raffleId, displayName, contact, email, quantity });
   try {
     if (req.headers['x-paystack-signature']) {
       console.log('Processing Paystack webhook');
@@ -159,22 +160,22 @@ export const verifyPayment = async (req, res) => {
       }
       const event = req.body;
       if (event.event === 'charge.success') {
-        const { raffleId, displayName, contact } = event.data.metadata;
-        console.log('Webhook charge.success:', { raffleId, displayName, contact });
+        const { raffleId, displayName, contact, email, quantity } = event.data.metadata;
+        console.log('Webhook charge.success:', { raffleId, displayName, contact, email, quantity });
         const raffle = await Raffle.findById(raffleId);
         if (!raffle) {
           console.error('Raffle not found for webhook:', raffleId);
           return res.status(404).json({ error: 'Raffle not found' });
         }
-        await handleTicketGeneration({ body: { raffleId, displayName, contact } }, res, raffle, displayName, contact);
+        await handleTicketGeneration({ body: { raffleId, displayName, contact, email, quantity } }, res, raffle, displayName, contact, email, parseInt(quantity));
         return res.status(200).send();
       }
       return res.status(200).send();
     }
     console.log('Processing client-side payment verification');
-    if (!reference || !raffleId || !displayName || !contact) {
-      console.error('Missing required fields:', { reference, raffleId, displayName, contact, email });
-      return res.status(400).json({ error: 'Missing required fields: reference, raffleId, displayName, contact' });
+    if (!reference || !raffleId || !displayName || !contact || !email || !quantity || isNaN(quantity) || quantity < 1) {
+      console.error('Missing or invalid required fields:', { reference, raffleId, displayName, contact, email, quantity });
+      return res.status(400).json({ error: 'Missing or invalid required fields: reference, raffleId, displayName, contact, email, quantity' });
     }
     if (!process.env.PAYSTACK_SECRET) {
       console.error('PAYSTACK_SECRET is not defined');
@@ -201,7 +202,7 @@ export const verifyPayment = async (req, res) => {
       return res.status(404).json({ error: 'Raffle not found' });
     }
     console.log('Raffle found:', raffle._id);
-    await handleTicketGeneration(req, res, raffle, displayName, contact);
+    await handleTicketGeneration(req, res, raffle, displayName, contact, email, parseInt(quantity));
   } catch (err) {
     console.error('Verify payment error:', err.message, err.stack);
     if (!res.headersSent) {
@@ -221,7 +222,7 @@ export const getTicketByNumber = async (req, res) => {
     if (!raffle) {
       return res.status(404).json({ error: 'Raffle not found' });
     }
-    const participant = raffle.participants.find(p => p.ticketNumber === ticketNumber);
+    const participant = raffle.participants.find(p => p.ticketNumbers.includes(ticketNumber));
     if (!participant) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
@@ -233,49 +234,72 @@ export const getTicketByNumber = async (req, res) => {
 };
 
 // Handle ticket generation
-async function handleTicketGeneration(req, res, raffle, displayName, contact) {
+async function handleTicketGeneration(req, res, raffle, displayName, contact, email, quantity) {
   try {
-    console.log('Starting ticket generation for raffle:', raffle._id, 'displayName:', displayName);
-    const ticketNumber = crypto.randomBytes(8).toString('hex').toUpperCase();
-    console.log('Generated ticket number:', ticketNumber);
+    console.log('Starting ticket generation for raffle:', raffle._id, 'displayName:', displayName, 'quantity:', quantity);
     
-    const qrCode = await generateQR(raffle._id.toString(), ticketNumber).catch(err => {
-      console.error('QR code generation failed:', err);
-      throw new Error(`QR code generation failed: ${err.message}`);
-    });
-    console.log('QR code generated successfully');
+    const ticketNumbers = [];
+    const qrCodes = [];
+    for (let i = 0; i < quantity; i++) {
+      const ticketNumber = crypto.randomBytes(8).toString('hex').toUpperCase();
+      ticketNumbers.push(ticketNumber);
+      const qrCode = await generateQR(raffle._id.toString(), ticketNumber).catch(err => {
+        console.error('QR code generation failed:', err);
+        throw new Error(`QR code generation failed: ${err.message}`);
+      });
+      qrCodes.push(qrCode);
+    }
+    console.log('Generated ticket numbers:', ticketNumbers);
+
+    // Check if participant already exists by email and contact
+    const existingParticipant = raffle.participants.find(
+      p => p.email === email && p.contact === contact
+    );
     
-    raffle.participants.push({ displayName, contact, ticketNumber });
+    if (existingParticipant) {
+      // Add new ticket numbers to existing participant
+      existingParticipant.ticketNumbers.push(...ticketNumbers);
+      existingParticipant.displayName = displayName; // Update displayName if changed
+    } else {
+      // Add new participant
+      raffle.participants.push({
+        displayName,
+        contact,
+        email,
+        ticketNumbers,
+      });
+    }
+
     await raffle.save().catch(err => {
       console.error('MongoDB save error:', err);
       throw new Error(`MongoDB save error: ${err.message}`);
     });
-    console.log('Participant added to raffle and saved');
-    
-    const pdfBuffer = await generatePDF({ ticketNumber, raffleId: raffle._id, displayName, contact, qrCode }).catch(err => {
+    console.log('Participant updated/saved with ticket numbers:', ticketNumbers);
+
+    const pdfBuffer = await generatePDF({ ticketNumbers, raffleId: raffle._id, displayName, contact, qrCodes }).catch(err => {
       console.error('PDF generation failed:', err);
       throw new Error(`PDF generation failed: ${err.message}`);
     });
-    console.log('PDF generated successfully');
-    
+    console.log('ZIP file generated for tickets');
+
     if (res.headersSent) {
-      console.warn('Headers already sent, cannot send PDF response');
+      console.warn('Headers already sent, cannot send ZIP response');
       return;
     }
-    
+
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename=ticket-${ticketNumber}.pdf`,
-      'X-Ticket-Number': ticketNumber,
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename=tickets-${raffle._id}.zip`,
+      'X-Ticket-Numbers': JSON.stringify(ticketNumbers),
     });
-    console.log('Response headers set for PDF download');
-    
+    console.log('Response headers set for ZIP download');
+
     res.send(pdfBuffer);
-    console.log('PDF sent in response');
+    console.log('ZIP file sent in response');
   } catch (err) {
     console.error('Ticket generation error:', err.message, err.stack);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to generate ticket', details: err.message });
+      res.status(500).json({ error: 'Failed to generate tickets', details: err.message });
     } else {
       console.warn('Headers already sent, cannot send error response');
     }
@@ -321,8 +345,10 @@ export const endRaffle = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized: Invalid creator secret' });
     }
     if (raffle.participants.length > 0) {
-      const winnerIndex = Math.floor(Math.random() * raffle.participants.length);
-      raffle.winner = raffle.participants[winnerIndex].ticketNumber;
+      // Collect all ticket numbers from participants
+      const allTicketNumbers = raffle.participants.reduce((acc, p) => [...acc, ...p.ticketNumbers], []);
+      const winnerIndex = Math.floor(Math.random() * allTicketNumbers.length);
+      raffle.winner = allTicketNumbers[winnerIndex];
     }
     raffle.endTime = new Date();
     await raffle.save();

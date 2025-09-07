@@ -1,37 +1,43 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import JSZip from 'jszip';
 
-async function generatePDF({ ticketNumber, raffleId, displayName, contact, qrCode }) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument();
-      let buffers = [];
-      doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => resolve(Buffer.concat(buffers)));
-      doc.on('error', reject);
+async function generatePDF({ ticketNumbers, raffleId, displayName, contact, qrCodes }) {
+  console.log('Generating PDFs for ticket numbers:', ticketNumbers);
+  const zip = new JSZip();
 
-      doc.fontSize(20).text('Raffle Ticket', { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(16).text(`Raffle ID: ${raffleId}`);
-      doc.text(`Ticket Number: ${ticketNumber}`);
-      doc.text(`Name: ${displayName}`);
-      doc.text(`Contact: ${contact}`);
-      doc.moveDown();
+  for (let i = 0; i < ticketNumbers.length; i++) {
+    const ticketNumber = ticketNumbers[i];
+    const qrCode = qrCodes[i];
+    const doc = new PDFDocument();
+    let buffers = [];
+    
+    doc.on('data', buffers.push.bind(buffers));
+    doc.on('end', () => {});
 
-      // Ensure qrCode is a data URL and add it to the PDF
-      if (typeof qrCode !== 'string' || !qrCode.startsWith('data:image/')) {
-        throw new Error('QR code must be a valid data URL');
-      }
-      console.log('Adding QR code to PDF:', qrCode.slice(0, 50) + '...');
-      doc.image(qrCode, { fit: [100, 100], align: 'center' });
+    doc.fontSize(20).text('Raffle Ticket', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(14).text(`Raffle ID: ${raffleId}`);
+    doc.text(`Ticket Number: ${ticketNumber}`);
+    doc.text(`Name: ${displayName}`);
+    doc.text(`Contact: ${contact}`);
+    doc.moveDown();
+    doc.image(qrCode, { fit: [100, 100], align: 'center', valign: 'center' });
 
-      // Finalize the document
-      doc.end();
-    } catch (err) {
-      console.error('Error generating PDF:', err);
-      reject(new Error('Failed to generate PDF: ' + err.message));
-    }
-  });
+    doc.end();
+
+    const pdfBuffer = await new Promise((resolve) => {
+      let buffer = Buffer.from([]);
+      doc.on('data', (chunk) => (buffer = Buffer.concat([buffer, chunk])));
+      doc.on('end', () => resolve(buffer));
+    });
+
+    zip.file(`ticket-${ticketNumber}.pdf`, pdfBuffer);
+  }
+
+  const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+  console.log('ZIP file generated for tickets:', ticketNumbers);
+  return zipBuffer;
 }
 
 export default generatePDF;
