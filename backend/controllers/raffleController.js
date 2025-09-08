@@ -35,7 +35,10 @@ export const adminLogin = async (req, res) => {
 };
 
 // Create raffle
-export const createRaffle = [
+const Raffle = require('../models/Raffle');
+const jwt = require('jsonwebtoken');
+
+const createRaffle = [
   (req, res, next) => {
     console.log('Before createRaffle:', req.headers, req.body);
     next();
@@ -52,7 +55,7 @@ export const createRaffle = [
         throw new Error('JWT_SECRET is not defined');
       }
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const { title, description, prizeTypes, cashPrize, itemName, ticketPrice, endTime } = req.body;
+      const { title, description, prizeTypes, cashPrize, itemName, ticketPrice, endTime, creatorSecret } = req.body;
 
       let parsedPrizeTypes;
       try {
@@ -76,9 +79,6 @@ export const createRaffle = [
       if (parsedPrizeTypes.includes('item') && !itemName) {
         return res.status(400).json({ error: 'Item name is required when item is selected' });
       }
-      if (parsedPrizeTypes.includes('item') && !req.file) {
-        return res.status(400).json({ error: 'Prize image is required when item is selected' });
-      }
       if (!ticketPrice || isNaN(ticketPrice) || parseFloat(ticketPrice) < 0) {
         return res.status(400).json({ error: 'Ticket price must be a non-negative number' });
       }
@@ -93,7 +93,7 @@ export const createRaffle = [
         prizeTypes: parsedPrizeTypes,
         cashPrize: parsedPrizeTypes.includes('cash') ? parseFloat(cashPrize) : null,
         itemName: parsedPrizeTypes.includes('item') ? itemName : null,
-        prizeImage: req.file ? req.file.buffer.toString('base64') : null,
+        prizeImage: req.file ? `data:image/jpeg;base64,${req.file.buffer.toString('base64')}` : null,
         ticketPrice: parseFloat(ticketPrice),
         endTime: endDate,
         createdBy: decoded.username,
@@ -102,7 +102,7 @@ export const createRaffle = [
       });
 
       await raffle.save();
-      res.status(201).json({ id: raffle._id });
+      res.status(201).json(raffle);
     } catch (err) {
       console.error('Create raffle error:', err);
       res.status(400).json({ error: 'Failed to create raffle', details: err.message });
