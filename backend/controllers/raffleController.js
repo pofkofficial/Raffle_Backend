@@ -97,6 +97,7 @@ export const createRaffle = [
         ticketPrice: parseFloat(ticketPrice),
         endTime: endDate,
         createdBy: decoded.username,
+        creatorSecret,
         createdAt: new Date(),
       });
 
