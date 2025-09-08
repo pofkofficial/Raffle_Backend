@@ -35,7 +35,6 @@ export const adminLogin = async (req, res) => {
 };
 
 // Create raffle
-const jwt = require('jsonwebtoken');
 
 const createRaffle = [
   (req, res, next) => {
