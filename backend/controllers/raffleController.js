@@ -105,7 +105,7 @@ export const createRaffle = [
       });
 
       await raffle.save();
-      res.status(201).json( raffle );
+      res.status(201).json(raffle);
     } catch (err) {
       console.error('Create raffle error:', err);
       res.status(400).json({ error: 'Failed to create raffle', details: err.message });
@@ -355,9 +355,9 @@ export const getAllRaffles = async (req, res) => {
 
 // End raffle
 export const endRaffle = async (req, res) => {
-  const { id } = req.params;
-  console.log(`POST /api/raffles/end/${id}`);
+  console.log(`POST /api/raffles/end/${req.params.id}/${req.params.secret}`);
   try {
+    const { id, secret } = req.params;
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -366,20 +366,35 @@ export const endRaffle = async (req, res) => {
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET is not defined');
     }
-    jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     const raffle = await Raffle.findById(id);
     if (!raffle) {
       return res.status(404).json({ error: 'Raffle not found' });
     }
-    if (raffle.participants.length > 0) {
-      const allTicketNumbers = raffle.participants.reduce((acc, p) => [...acc, ...p.ticketNumbers], []);
-      const winnerIndex = Math.floor(Math.random() * allTicketNumbers.length);
-      raffle.winner = allTicketNumbers[winnerIndex];
+    if (raffle.creatorSecret !== secret) {
+      return res.status(403).json({ error: 'Invalid creator secret' });
     }
+    if (raffle.createdBy !== decoded.username) {
+      return res.status(403).json({ error: 'Unauthorized: Only the creator can end the raffle' });
+    }
+    if (raffle.winner) {
+      return res.status(400).json({ error: 'Raffle already ended' });
+    }
+
+    const allTicketNumbers = raffle.participants?.reduce((acc, participant) => {
+      return acc.concat(participant.ticketNumbers || []);
+    }, []) || [];
+    if (allTicketNumbers.length === 0) {
+      return res.status(400).json({ error: 'No participants in the raffle' });
+    }
+
+    const winnerTicket = allTicketNumbers[Math.floor(Math.random() * allTicketNumbers.length)];
+    raffle.winner = winnerTicket;
     raffle.endTime = new Date();
     await raffle.save();
-    res.status(200).json({ winner: raffle.winner || null });
+
+    res.status(200).json(raffle);
   } catch (err) {
     console.error('End raffle error:', err);
     res.status(500).json({ error: 'Failed to end raffle', details: err.message });
