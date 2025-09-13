@@ -13,6 +13,8 @@ router.post('/verify-payment', raffleCtrl.verifyPayment);
 router.post('/webhook', raffleCtrl.verifyPayment);
 router.get('/:id', raffleCtrl.getRaffle);
 router.post('/end/:id/:secret', raffleCtrl.endRaffle);
+router.delete('/:id/:secret', raffleCtrl.deleteRaffle);
+router.patch('/:id/:secret', raffleCtrl.updateRaffleEndTime);
 //router.get('/validate', raffleCtrl.validateTicket);
 
 export default router;
