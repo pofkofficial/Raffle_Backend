@@ -7,7 +7,7 @@ import { parse } from 'url';
 
 // Initialize Express app
 const app = express();
-const FRONTEND = process.env.FRONTEND_LINK;
+const FRONTEND = process.env.FRONTEND_LINK | process.env.FRONTEND_LINK2;
 
 // CORS Configuration
 const allowedOrigins = [

@@ -234,7 +234,7 @@ export const getTicketByNumber = async (req, res) => {
     if (!participant) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
-    res.status(200).json({ raffle, participant });
+    res.status(200).json({ raffle, participant, ticketNumber });
   } catch (error) {
     console.error('Error fetching ticket:', error);
     res.status(500).json({ error: 'Failed to fetch ticket', details: error.message });
